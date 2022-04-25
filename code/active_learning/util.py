@@ -100,7 +100,7 @@ class UncertaintySamplingWithDensityQuerySelector(QuerySelector):
 
         prediction_variances_normalized = prediction_variances / np.amax(prediction_variances)
         
-        unobserved_instance_vector_magnitudes = np.sum(np.power(X_unobserved, 2), axis=1)
+        unobserved_instance_vector_magnitudes = np.linalg.norm(X_unobserved, axis=1) # 2-norm by default # np.sum(np.power(X_unobserved, 2), axis=1)
         furthest_possible_distance = np.max(unobserved_instance_vector_magnitudes) * 2
         largest_possible_distance_sum = furthest_possible_distance * N_unobserved
 
@@ -110,10 +110,11 @@ class UncertaintySamplingWithDensityQuerySelector(QuerySelector):
         densities = np.zeros((N_unobserved,))
         for i in range(N_unobserved):
             diffs = X_unobserved - X_unobserved[i, :] # uses numpy broadcasting to get result of subtracting row i from every row in X_unobserved
-            distances = np.sum(np.power(diffs, 2), axis=1) # euclidean distances
+            distances = np.linalg.norm(diffs, axis=1) # # 2-norm by default # np.sum(np.power(diffs, 2), axis=1) # euclidean distances
             similarities = (furthest_possible_distance - distances) / furthest_possible_distance # results in similarity scores between 0 and 1, where 1 is most similar and 0 is least similar.
             densities[i] =  np.sum(similarities) / N_unobserved
         '''
+        # print("densities (old): {}".format(densities[:10]))
 
         # New (faster) version of density calculation
         if (self.is_first_selection):
@@ -126,6 +127,8 @@ class UncertaintySamplingWithDensityQuerySelector(QuerySelector):
         assert(not np.isnan(distance_sums).any()) # verify that no nans (previously returned/observed indices) are still labeled as unobserved
         similarity_sums = (largest_possible_distance_sum - distance_sums) / furthest_possible_distance
         densities = similarity_sums / N_unobserved
+        # print("densities (new): {}".format(densities[:10]))
+        # print("")
         
         scores = prediction_variances_normalized * np.power(densities, beta)
 
