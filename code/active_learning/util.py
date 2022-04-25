@@ -13,6 +13,10 @@ class QuerySelector(object):
     def select_query_idx(self, X, y, observed_idxs, unobserved_idxs_set, current_model):
         pass
 
+    # Called at the start of each individual run to reset QuerySelector object (in case the object contains any attributes that should be reset between runs)
+    def reset(self):
+        pass
+
 '''
 RandomQuerySelector just samples randomly from the unobserved instances, as in HW0.
 '''
@@ -58,14 +62,24 @@ UncertaintySamplingWithDensityQuerySelector is like UncertaintySamplingQuerySele
 The similarity function used here (to determine how similar any two instances are) is based on euclidean distance.
 '''
 class UncertaintySamplingWithDensityQuerySelector(QuerySelector):
-    def __init__(self, beta=1):
+    def __init__(self, pairwise_distances, beta=1):
+        self.pairwise_distances = pairwise_distances # Pairwise distances for the X in question. Should be N x N. This stays constant (precomputed).
         self.beta = beta
+
+        self.reset()
+    
+    def reset(self):
+        self.is_first_selection = True
+        self.distance_sums_all = np.sum(self.pairwise_distances, axis=1)
     
     def select_query_idx(self, X, y, observed_idxs_list, unobserved_idxs_set, current_model):
         beta = self.beta
         N = X.shape[0]
         N_observed = len(observed_idxs_list)
         N_unobserved = len(unobserved_idxs_set)
+
+        assert(N == self.pairwise_distances.shape[0])
+        assert(N == self.pairwise_distances.shape[1])
 
         X_observed = np.take(X, observed_idxs_list, axis=0)
         y_observed = np.take(y, observed_idxs_list, axis=0)
@@ -88,7 +102,10 @@ class UncertaintySamplingWithDensityQuerySelector(QuerySelector):
         
         unobserved_instance_vector_magnitudes = np.sum(np.power(X_unobserved, 2), axis=1)
         furthest_possible_distance = np.max(unobserved_instance_vector_magnitudes) * 2
+        largest_possible_distance_sum = furthest_possible_distance * N_unobserved
 
+        # Old version of density calculation (no precomputation, and python for loop, so it is quite slow)
+        '''
         # Would be nice if this could be vectorized further to avoid the for loop, but I think this is fine for now
         densities = np.zeros((N_unobserved,))
         for i in range(N_unobserved):
@@ -96,11 +113,27 @@ class UncertaintySamplingWithDensityQuerySelector(QuerySelector):
             distances = np.sum(np.power(diffs, 2), axis=1) # euclidean distances
             similarities = (furthest_possible_distance - distances) / furthest_possible_distance # results in similarity scores between 0 and 1, where 1 is most similar and 0 is least similar.
             densities[i] =  np.sum(similarities) / N_unobserved
+        '''
+
+        # New (faster) version of density calculation
+        if (self.is_first_selection):
+            # Need to take care of starting observations on first selection, for self.distance_sums_all
+            for observed_idx in observed_idxs_list:
+                self.distance_sums_all -= self.pairwise_distances[observed_idx, :]
+                self.distance_sums_all[observed_idx] = np.nan
+            self.is_first_selection = False
+        distance_sums = np.delete(self.distance_sums_all, observed_idxs_list, axis=0) # select only those that are unobserved
+        assert(not np.isnan(distance_sums).any()) # verify that no nans (previously returned/observed indices) are still labeled as unobserved
+        similarity_sums = (largest_possible_distance_sum - distance_sums) / furthest_possible_distance
+        densities = similarity_sums / N_unobserved
         
         scores = prediction_variances_normalized * np.power(densities, beta)
 
         best_idx_unobserved = np.argmax(scores)
         best_idx = idxs_unobserved[best_idx_unobserved] # convert back to original instance idx
+
+        self.distance_sums_all -= self.pairwise_distances[best_idx, :]
+        self.distance_sums_all[best_idx] = np.nan
 
         return best_idx
 
@@ -229,6 +262,8 @@ class ActiveLearningSimulation:
         observed_set_size_limit = self.observed_set_size_limit
         base_learner_class = self.base_learner_class
         query_selector = self.query_selector
+
+        query_selector.reset()
         
         # N is the total number of instances
         N = X.shape[0]
